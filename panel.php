@@ -1,126 +1,182 @@
 <?php
-// --- CONFIGURACIÓN ---
+// Engañar a PHP para que sepa que el usuario navega con HTTPS gracias a Cloudflare
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https') {
+    $_SERVER['HTTPS'] = 'on';
+    $_SERVER['SERVER_PORT'] = 443;
+}
+session_start();
+// CONTROL DE ACCESO: Solo usuarios logueados
+if (!isset($_SESSION['usuario_id'])) {
+    header("Location: index.php");
+    exit();
+}
+
+// Si es admin, mandarlo a su panel (Evita confusiones si tiene dos pestañas abiertas)
+if (isset($_SESSION['rol']) && $_SESSION['rol'] === 'admin') {
+    header("Location: admin.php");
+    exit();
+}
+
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
+
 include 'db.php';
 
-// Fecha mínima (Hoy)
+$id_u = $_SESSION['usuario_id'];
+
+// GARANTÍA: Obtenemos el nombre real de la base de datos para evitar confusiones de sesión
+$stmt_user = $pdo->prepare("SELECT nombre, email FROM usuarios WHERE id = ?");
+$stmt_user->execute([$id_u]);
+$user_data = $stmt_user->fetch();
+$nombre_real = $user_data ? $user_data['nombre'] : 'Usuario';
+$email_real = $user_data ? $user_data['email'] : '---';
+
 $hoy = date("Y-m-d");
 
-// Usuario
-$usu = isset($_GET['nombre']) ? $_GET['nombre'] : "Admin";
-$id_u = isset($_GET['id']) ? $_GET['id'] : 1;
+// 1. Lógica para cancelar una cita
+if (isset($_GET['eliminar_id'])) {
+    $id_eliminar = $_GET['eliminar_id'];
+    $stmt_del = $pdo->prepare("DELETE FROM citas WHERE id = ? AND usuario_id = ?");
+    $stmt_del->execute([$id_eliminar, $id_u]);
+    header("Location: panel.php");
+    exit();
+}
 
-// --- GUARDAR (INSERT) ---
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
+// 2. Lógica para crear una nueva cita
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['btn_reservar'])) {
     $dia = $_POST['dia'];
     $hora = $_POST['hora'];
     $serv = $_POST['servicio'];
-    
-    // Unimos Día + Hora para que MySQL lo entienda (Formato: YYYY-MM-DD HH:MM:SS)
-    $fecha_final = $dia . ' ' . $hora . ':00';
-    
+
     try {
-        $sql = "INSERT INTO reservas (usuario_id, servicio_id, fecha_hora, estado) VALUES (?, ?, ?, 'CONFIRMADA')";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$id_u, $serv, $fecha_final]);
+        $check = $pdo->prepare("SELECT id FROM citas WHERE fecha = ? AND hora = ? AND estado != 'Cancelada'");
+        $check->execute([$dia, $hora]);
+        
+        if ($check->rowCount() > 0) {
+            echo "<script>alert('Esa hora ya está reservada. Elige otro horario.');</script>";
+        } else {
+            $sql = "INSERT INTO citas (usuario_id, servicio, fecha, hora, estado) VALUES (?, ?, ?, ?, 'Pendiente')";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([$id_u, $serv, $dia, $hora]);
+            header("Location: panel.php?success=1");
+            exit();
+        }
     } catch (Exception $e) {
-        echo "<script>alert('Error: " . $e->getMessage() . "');</script>";
+        echo "<script>alert('Error al reservar: " . $e->getMessage() . "');</script>";
     }
 }
 
-// --- LEER DATOS ---
-$sql2 = "SELECT r.id, r.fecha_hora, r.estado, u.nombre as cliente, s.nombre as nom_serv 
-         FROM reservas r 
-         LEFT JOIN usuarios u ON r.usuario_id = u.id 
-         LEFT JOIN servicios s ON r.servicio_id = s.id 
-         ORDER BY r.fecha_hora DESC";
-$res = $pdo->query($sql2);
+// 3. Obtenemos las citas del usuario actual
+$sql2 = "SELECT id, fecha, hora, servicio, estado FROM citas WHERE usuario_id = ? ORDER BY fecha DESC, hora DESC";
+$res = $pdo->prepare($sql2);
+$res->execute([$id_u]);
+$lista = $res->fetchAll(PDO::FETCH_ASSOC);
 ?>
-
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Panel Gestión</title>
+    <title>Mi Panel - ReservaYa</title>
+    <link rel="stylesheet" href="estilos.css">
+    <link rel="icon" type="image/jpeg" href="Capturas/Logotipo.jpg">
 </head>
-<body style="font-family: Arial; padding: 20px; background-color: #eee;">
-
-    <div style="background: white; border: 1px solid #999; padding: 20px; max-width: 900px; margin: 0 auto;">
+<body class="bg-panel">
+    <div class="watermark">ReservaYa</div>
+    <div class="dashboard-container">
         
-        <h3>Panel ReservaYa</h3>
-        <p>Hola, <b><?php echo $usu; ?></b> | <a href="index.php">Salir</a></p>
-        <hr>
+        <div class="header-info">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <img src="Capturas/Logotipo.jpg" alt="Logo" style="max-width: 60px; border-radius: 50%;">
+                <h2 style="margin:0;">Panel de Control</h2>
+            </div>
+            <p>Bienvenido/a, <b><?php echo htmlspecialchars($nombre_real); ?></b> (<?php echo htmlspecialchars($email_real); ?>) | <a href="logout.php" class="btn-danger" style="padding: 5px 15px; border-radius: 5px; color: white; text-decoration: none;">Cerrar Sesión</a></p>
+        </div>
+        
+        <?php if (isset($_GET['success'])): ?>
+            <div style="background: #d4edda; color: #155724; padding: 15px; border-radius: 8px; margin-bottom: 20px;">✅ Cita reservada correctamente.</div>
+        <?php endif; ?>
 
-        <div style="background:#ddd; padding:15px; border:1px solid #aaa;">
-            <h4>+ Nueva Cita</h4>
-            <form method="POST">
-                <label>Servicio:</label>
-                <select name="servicio" style="padding:5px;">
-                    <option value="1">Corte Básico</option>
-                    <option value="2">Barba</option>
-                    <option value="3">Tinte</option>
-                </select>
-                
-                <br><br>
-
-                <label>Día:</label>
-                <input type="date" name="dia" min="<?php echo $hoy; ?>" required style="padding:5px;">
-
-                <label style="margin-left:15px;">Hora:</label>
-                <select name="hora" style="padding:5px;">
-                    <option>09:00</option>
-                    <option>09:15</option>
-                    <option>09:30</option>
-                    <option>09:45</option>
-                    <option>10:00</option>
-                    <option>10:15</option>
-                    <option>10:30</option>
-                    <option>10:45</option>
-                    <option>11:00</option>
-                    <option>11:15</option>
-                    <option>11:30</option>
-                    <option>12:00</option>
-                    <option>16:00</option>
-                    <option>16:15</option>
-                    <option>16:30</option>
-                    <option>17:00</option>
-                </select>
-                
-                <button type="submit" style="margin-left:20px; padding: 5px 15px; background: #28a745; color: white; border: none; cursor: pointer;">Confirmar Reserva</button>
+        <hr style="margin-bottom: 30px; opacity: 0.2;">
+        
+        <!-- Formulario de Reserva -->
+        <div style="background: rgba(255,255,255,0.6); padding:25px; border-radius:12px; margin-bottom: 30px;">
+            <h4 style="margin-top: 0; margin-bottom: 15px;">📅 Reservar Nueva Cita</h4>
+            <form method="POST" autocomplete="off">
+                <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label>Servicio:</label>
+                        <select name="servicio" required>
+                            <option value="Corte de Pelo">Corte de Pelo</option>
+                            <option value="Manicura">Manicura</option>
+                            <option value="Barba">Barba</option>
+                            <option value="Afeitado Clásico">Afeitado Clásico</option>
+                            <option value="Corte Infantil">Corte Infantil</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1; min-width: 150px;">
+                        <label>Día:</label>
+                        <input type="date" name="dia" min="<?php echo $hoy; ?>" required>
+                    </div>
+                    <div style="flex: 1; min-width: 100px;">
+                        <label>Hora:</label>
+                        <select name="hora" required>
+                            <?php 
+                                $horas = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "16:00", "16:30", "17:00", "17:30"];
+                                foreach($horas as $h) echo "<option value='$h'>$h</option>";
+                            ?>
+                        </select>
+                    </div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <button type="submit" name="btn_reservar" class="btn-success">Confirmar Reserva</button>
+                    </div>
+                </div>
             </form>
         </div>
 
-        <hr>
-
-        <h4>Agenda (Base de Datos)</h4>
-        <table border="1" width="100%" cellpadding="5" style="border-collapse: collapse;">
-            <tr style="background-color: #444; color: white;">
-                <th>ID</th>
-                <th>Cliente</th>
-                <th>Servicio</th>
-                <th>Fecha y Hora</th>
-                <th>Estado</th>
-            </tr>
-            
-            <?php 
-            if ($res) {
-                while ($fila = $res->fetch(PDO::FETCH_ASSOC)) {
-                    $nom_cli = $fila['cliente'] ? $fila['cliente'] : "Desconocido";
-                    $nom_ser = $fila['nom_serv'] ? $fila['nom_serv'] : "Servicio Borrado";
-                    $fecha_bonita = date("d/m/Y H:i", strtotime($fila['fecha_hora']));
-
-                    echo "<tr>";
-                    echo "<td>#" . $fila['id'] . "</td>";
-                    echo "<td><b>" . $nom_cli . "</b></td>"; 
-                    echo "<td>" . $nom_ser . "</td>";
-                    echo "<td>" . $fecha_bonita . "</td>";
-                    echo "<td>" . $fila['estado'] . "</td>";
-                    echo "</tr>";
-                }
-            }
-            ?>
-        </table>
+        <!-- Tabla de Citas -->
+        <h4 style="margin-bottom: 15px;">📋 Mis Citas Programadas</h4>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Servicio</th>
+                        <th>Fecha</th>
+                        <th>Hora</th>
+                        <th>Estado</th>
+                        <th style="text-align:center;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($lista as $fila): ?>
+                    <?php 
+                        $estado_clase = 'status-pendiente';
+                        if ($fila['estado'] == 'Confirmada') $estado_clase = 'status-confirmada';
+                        if ($fila['estado'] == 'Cancelada') $estado_clase = 'status-cancelada';
+                    ?>
+                    <tr>
+                        <td><b><?= htmlspecialchars($fila['servicio']) ?></b></td>
+                        <td><?= htmlspecialchars($fila['fecha']) ?></td>
+                        <td><?= htmlspecialchars($fila['hora']) ?></td>
+                        <td>
+                            <span class="badge <?= $estado_clase ?>">
+                                <?= htmlspecialchars($fila['estado'] ?: 'Pendiente') ?>
+                            </span>
+                        </td>
+                        <td style="text-align: center;">
+                            <?php if ($fila['estado'] !== 'Cancelada'): ?>
+                                <a href="panel.php?eliminar_id=<?= $fila['id'] ?>" onclick="return confirm('¿Estás seguro de que quieres cancelar esta cita?')" class="btn-danger" style="font-size: 0.75rem; padding: 5px 10px; color: white; text-decoration: none; border-radius: 4px;">Cancelar</a>
+                            <?php else: ?>
+                                <span style="color: #666; font-size: 0.8rem;">---</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($lista)): ?>
+                    <tr><td colspan="5" style="text-align:center; padding: 30px; color: #666;">Aún no tienes ninguna cita reservada.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 </body>
 </html>

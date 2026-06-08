@@ -1,0 +1,6 @@
+# Ignorar datos de base de datos y certificados
+datos_sql/
+certificados/
+.documentacion/
+*.bak
+copia_tablas.sql

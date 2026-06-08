@@ -4,7 +4,7 @@ FROM php:8.0-apache
 # 2. Instalo las extensiones para que funcione MySQL
 RUN docker-php-ext-install mysqli pdo pdo_mysql
 
-# 3. Copio todos tus archivos dentro del contenedor
+# 3. Copio todos mis archivos dentro del contenedor
 COPY . /var/www/html/
 
 # 4. Ajusto los permisos del servidor
