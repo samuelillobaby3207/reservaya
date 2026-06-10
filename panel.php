@@ -106,11 +106,10 @@ $lista = $res->fetchAll(PDO::FETCH_ASSOC);
                     <div style="flex: 1; min-width: 200px;">
                         <label>Servicio:</label>
                         <select name="servicio" required>
-                            <option value="Corte de Pelo">Corte de Pelo</option>
-                            <option value="Manicura">Manicura</option>
-                            <option value="Barba">Barba</option>
-                            <option value="Afeitado Clásico">Afeitado Clásico</option>
-                            <option value="Corte Infantil">Corte Infantil</option>
+                            <option value="Arreglo y perfilado de barba (15€)">Arreglo y perfilado de barba (15€)</option>
+                            <option value="Corte de Pelo (8€)">Corte de Pelo (8€)</option>
+                            <option value="Mechas mas Corte (25€)">Mechas mas Corte (25€)</option>
+                            <option value="Depilacion Cejas (4€)">Depilacion Cejas (4€)</option>
                         </select>
                     </div>
                     <div style="flex: 1; min-width: 150px;">
